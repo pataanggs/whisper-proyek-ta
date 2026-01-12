@@ -1,6 +1,7 @@
 """
 Trainer module for Whisper fine-tuning.
 Implements model initialization, freeze encoder strategy, and training loop.
+With proper language token configuration for Indonesian as proxy for Minangkabau.
 """
 
 import torch
@@ -9,28 +10,50 @@ from typing import Dict, Any, Optional
 from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
+    WhisperTokenizer,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
 
-from config import MODEL_NAME, LANGUAGE, TASK, TRAINING_ARGS, MODEL_DROPOUT_CONFIG
+from config import (
+    MODEL_NAME, 
+    LANGUAGE, 
+    LANGUAGE_FULL,
+    TASK, 
+    TRAINING_ARGS, 
+    MODEL_DROPOUT_CONFIG,
+    GENERATION_CONFIG,
+)
 
 
 def load_model() -> WhisperForConditionalGeneration:
     """
-    Load and initialize Whisper model with dropout for regularization.
+    Load and initialize Whisper model with proper language configuration.
     
     Returns:
-        WhisperForConditionalGeneration model
+        WhisperForConditionalGeneration model configured for Indonesian
     """
     model = WhisperForConditionalGeneration.from_pretrained(MODEL_NAME)
     
-    # Configure model for transcription
-    model.generation_config.language = LANGUAGE
-    model.generation_config.task = TASK
-    model.generation_config.forced_decoder_ids = None
+    # ==========================================================================
+    # CRITICAL: Set language token to Indonesian (proxy for Minangkabau)
+    # ==========================================================================
     
+    # Configure generation config with Indonesian language
+    model.generation_config.language = LANGUAGE  # "id"
+    model.generation_config.task = TASK  # "transcribe"
+    
+    # Set forced decoder IDs to use Indonesian token
+    # This ensures the model starts generating with <|id|> token instead of <|en|>
+    model.generation_config.forced_decoder_ids = None  # Will be set by processor
+    
+    # Configure beam search for better inference
+    model.generation_config.num_beams = GENERATION_CONFIG["num_beams"]
+    model.generation_config.max_length = GENERATION_CONFIG["max_length"]
+    
+    # ==========================================================================
     # Apply dropout configuration to prevent overfitting
+    # ==========================================================================
     model.config.dropout = MODEL_DROPOUT_CONFIG["dropout"]
     model.config.attention_dropout = MODEL_DROPOUT_CONFIG["attention_dropout"]
     model.config.activation_dropout = MODEL_DROPOUT_CONFIG["activation_dropout"]
@@ -40,12 +63,21 @@ def load_model() -> WhisperForConditionalGeneration:
 
 def load_processor() -> WhisperProcessor:
     """
-    Load Whisper processor (tokenizer + feature extractor).
+    Load Whisper processor with Indonesian language configuration.
     
     Returns:
-        WhisperProcessor
+        WhisperProcessor configured for Indonesian
     """
-    processor = WhisperProcessor.from_pretrained(MODEL_NAME, language=LANGUAGE, task=TASK)
+    # Load processor with Indonesian language
+    processor = WhisperProcessor.from_pretrained(
+        MODEL_NAME, 
+        language=LANGUAGE_FULL,  # "indonesian"
+        task=TASK  # "transcribe"
+    )
+    
+    # Ensure tokenizer is configured correctly
+    processor.tokenizer.set_prefix_tokens(language=LANGUAGE_FULL, task=TASK)
+    
     return processor
 
 
@@ -208,9 +240,16 @@ def train_fold(
     print(f"{'='*60}")
     
     # CRITICAL: Re-initialize model for each fold to prevent weight leakage
-    print("Loading fresh model...")
+    print("Loading fresh model (re-initialized from pretrained weights)...")
     model = load_model()
     model = freeze_encoder(model)
+    
+    # Log language configuration
+    print(f"\nLanguage Configuration:")
+    print(f"  Language Token: {LANGUAGE} (Indonesian as proxy for Minangkabau)")
+    print(f"  Task: {TASK}")
+    print(f"  Beam Search: {GENERATION_CONFIG['num_beams']} beams")
+    print(f"  Dropout: {MODEL_DROPOUT_CONFIG['dropout']}")
     
     # Create training arguments
     fold_output_dir = f"{output_dir}/fold_{fold_idx}"
@@ -238,8 +277,8 @@ def train_fold(
     eval_results = trainer.evaluate()
     
     print(f"\nFold {fold_idx + 1} Results:")
-    print(f"  WER: {eval_results['eval_wer']:.4f}")
-    print(f"  CER: {eval_results['eval_cer']:.4f}")
+    print(f"  WER: {eval_results['eval_wer']:.4f} ({eval_results['eval_wer']*100:.2f}%)")
+    print(f"  CER: {eval_results['eval_cer']:.4f} ({eval_results['eval_cer']*100:.2f}%)")
     
     return {
         "wer": eval_results["eval_wer"],
@@ -256,8 +295,10 @@ if __name__ == "__main__":
     model = load_model()
     
     print(f"\nModel: {MODEL_NAME}")
-    print(f"Language: {LANGUAGE}")
+    print(f"Language: {LANGUAGE_FULL} ({LANGUAGE})")
     print(f"Task: {TASK}")
+    print(f"Beam Search: {GENERATION_CONFIG['num_beams']} beams")
+    print(f"Dropout: {MODEL_DROPOUT_CONFIG['dropout']}")
     
     # Test freeze encoder
     print("\nFreezing encoder...")
