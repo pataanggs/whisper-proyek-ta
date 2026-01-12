@@ -66,8 +66,9 @@ TRAINING_ARGS = {
     "per_device_eval_batch_size": 8,
     "gradient_accumulation_steps": 2,
     "learning_rate": 1e-5,
-    "warmup_steps": 50,
-    "max_steps": 400,  # Increased for cosine scheduler
+    "warmup_steps": 100,  # 25% of max_steps for smoother cosine start
+    "warmup_ratio": 0.25,  # Alternative: 25% warmup ratio
+    "max_steps": 400,
     "lr_scheduler_type": "cosine",  # Cosine annealing for better convergence
     "gradient_checkpointing": True,
     "bf16": True,
@@ -75,11 +76,13 @@ TRAINING_ARGS = {
     "dataloader_pin_memory": True,
     # Regularization
     "weight_decay": 0.01,
-    # Evaluation
+    # Evaluation & Logging
+    # With 124 samples, batch=32 -> ~4 steps/epoch
     "eval_strategy": "steps",
-    "eval_steps": 50,
-    "save_steps": 50,
-    "logging_steps": 10,
+    "eval_steps": 4,  # Evaluate every epoch
+    "save_steps": 4,  # Save every epoch
+    "logging_steps": 1,  # Log EVERY step for maximum detail
+    "logging_first_step": True,
     "load_best_model_at_end": True,
     "metric_for_best_model": "wer",
     "greater_is_better": False,
@@ -94,8 +97,8 @@ TRAINING_ARGS = {
 
 # Model dropout configuration (increased to fight overfitting)
 MODEL_DROPOUT_CONFIG = {
-    "dropout": 0.2,  # Increased from 0.1
-    "attention_dropout": 0.2,  # Increased from 0.1
+    "dropout": 0.2,  
+    "attention_dropout": 0.2,  
     "activation_dropout": 0.1,
 }
 
