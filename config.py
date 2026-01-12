@@ -59,40 +59,40 @@ MAX_DURATION_SECONDS = 50.0
 NUM_FOLDS = 5
 RANDOM_STATE = 42
 
-# Training arguments (optimized for lower WER)
+# Training arguments (v2 - optimized based on training curves)
 TRAINING_ARGS = {
     "output_dir": str(CHECKPOINT_DIR),
     "per_device_train_batch_size": 16,
     "per_device_eval_batch_size": 8,
     "gradient_accumulation_steps": 2,
-    "learning_rate": 1e-5,
-    "warmup_steps": 100,  # 25% of max_steps for smoother cosine start
-    "warmup_ratio": 0.25,  # Alternative: 25% warmup ratio
-    "max_steps": 400,
-    "lr_scheduler_type": "cosine",  # Cosine annealing for better convergence
+    # Learning rate - reduced for more gradual learning
+    "learning_rate": 5e-6,  # Reduced from 1e-5 to avoid spike
+    "warmup_ratio": 0.1,  # 10% warmup (shorter since lower LR)
+    "max_steps": 600,  # Increased for more training time
+    "lr_scheduler_type": "cosine",
     "gradient_checkpointing": True,
     "bf16": True,
     "dataloader_num_workers": 4,
     "dataloader_pin_memory": True,
     # Regularization
     "weight_decay": 0.01,
-    # Evaluation & Logging
-    # With 124 samples, batch=32 -> ~4 steps/epoch
+    # "label_smoothing_factor": 0.1,  # Disabled - causes decoder_input_ids error
+    # Evaluation & Logging (~4 steps/epoch)
     "eval_strategy": "steps",
     "eval_steps": 4,  # Evaluate every epoch
     "save_steps": 4,  # Save every epoch
-    "logging_steps": 1,  # Log EVERY step for maximum detail
+    "logging_steps": 1,  # Log EVERY step
     "logging_first_step": True,
     "load_best_model_at_end": True,
     "metric_for_best_model": "wer",
     "greater_is_better": False,
-    "save_total_limit": 3,
+    "save_total_limit": 5,  # Keep more checkpoints
     # Other
     "report_to": "wandb",
     "push_to_hub": False,
     "predict_with_generate": True,
     "generation_max_length": 225,
-    "torch_compile": True,
+    "torch_compile": False,  # Disabled - may cause issues with label_smoothing
 }
 
 # Model dropout configuration (increased to fight overfitting)
