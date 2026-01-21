@@ -1,13 +1,13 @@
 """
 Configuration module for Whisper fine-tuning on Minangkabau language.
-Contains all paths, hyperparameters, and configuration settings.
+OPTIMIZED FOR TINY DATASET (156 Files / 1.5 Hours).
+Focus: Anti-Overfitting & Aggressive Augmentation.
 """
 
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 # =============================================================================
@@ -19,108 +19,101 @@ TRAIN_METADATA = DATA_DIR / "metadata_train.csv"
 TEST_METADATA = DATA_DIR / "metadata_test.csv"
 AUDIO_ROOT = DATA_DIR
 
-# Output directories
 OUTPUT_DIR = BASE_DIR / "outputs"
 CHECKPOINT_DIR = OUTPUT_DIR / "checkpoints"
 PROCESSED_AUDIO_DIR = OUTPUT_DIR / "processed_audio"
 
-# Create directories if they don't exist
 OUTPUT_DIR.mkdir(exist_ok=True)
 CHECKPOINT_DIR.mkdir(exist_ok=True)
 PROCESSED_AUDIO_DIR.mkdir(exist_ok=True)
 
 # =============================================================================
-# WANDB CONFIGURATION
+# WANDB
 # =============================================================================
 WANDB_API_KEY = os.getenv("API_KEY")
 WANDB_PROJECT = "whisper-minangkabau"
-WANDB_GROUP = "whisper-minang-CV-freeze-encoder-v2"
+WANDB_GROUP = "whisper-minang-tiny-data-v1" 
 
 # =============================================================================
-# MODEL CONFIGURATION
+# MODEL
 # =============================================================================
 MODEL_NAME = "openai/whisper-base"
-# Use Indonesian ("id") as proxy for Minangkabau (not natively supported)
-LANGUAGE = "id"  # ISO 639-1 code for Indonesian
-LANGUAGE_FULL = "indonesian"  # Full name for processor
-DATA_LANGUAGE = "min"  # For filtering CSV (actual language code in dataset)
+LANGUAGE = "id"
+LANGUAGE_FULL = "indonesian"
+DATA_LANGUAGE = "min"
 TASK = "transcribe"
-
+FREEZE_ENCODER = True 
 # =============================================================================
 # AUDIO CONFIGURATION
 # =============================================================================
-SAMPLE_RATE = 16000
-MIN_DURATION_SECONDS = 0.0
-MAX_DURATION_SECONDS = 50.0
-
+SAMPLE_RATE = 16000          
+MIN_DURATION_SECONDS = 0.5      
+MAX_DURATION_SECONDS = 30.0  
 # =============================================================================
-# TRAINING CONFIGURATION
+# TRAINING ARGS
 # =============================================================================
 NUM_FOLDS = 5
 RANDOM_STATE = 42
 
-# Training arguments (v2 - optimized based on training curves)
 TRAINING_ARGS = {
     "output_dir": str(CHECKPOINT_DIR),
-    "per_device_train_batch_size": 16,
+    "per_device_train_batch_size": 16, # Effective Batch = 32 (with grad accum)
     "per_device_eval_batch_size": 8,
     "gradient_accumulation_steps": 2,
-    # Learning rate - reduced for more gradual learning
-    "learning_rate": 5e-6,  # Reduced from 1e-5 to avoid spike
-    "warmup_ratio": 0.1,  # 10% warmup (shorter since lower LR)
-    "max_steps": 600,  # Increased for more training time
-    "lr_scheduler_type": "cosine",
+    "learning_rate": 1e-5*0.5,  
+    "warmup_ratio": 0.2, # CHANGED: Higher warmup (20%) to gently introduce weights
+    "max_steps": 200,    # CHANGED: Reduced from 400. 50 epochs is too much for un-augmented data.
+    "lr_scheduler_type": "cosine", # Cosine annealing is best for short runs
+    "optim": "adamw_torch",
     "gradient_checkpointing": True,
     "bf16": True,
     "dataloader_num_workers": 4,
     "dataloader_pin_memory": True,
-    # Regularization
-    "weight_decay": 0.01,
-    # "label_smoothing_factor": 0.1,  # Disabled - causes decoder_input_ids error
-    # Evaluation & Logging (~4 steps/epoch)
+    "weight_decay": 0.2, # CHANGED: High weight decay to penalize complex weights
     "eval_strategy": "steps",
-    "eval_steps": 4,  # Evaluate every epoch
-    "save_steps": 4,  # Save every epoch
-    "logging_steps": 1,  # Log EVERY step
+    "eval_steps": 4,
+    "save_steps": 4,
+    "logging_steps": 1,
     "logging_first_step": True,
     "load_best_model_at_end": True,
     "metric_for_best_model": "wer",
     "greater_is_better": False,
-    "save_total_limit": 5,  # Keep more checkpoints
-    # Other
+    "save_total_limit": 1, 
     "report_to": "wandb",
     "push_to_hub": False,
     "predict_with_generate": True,
     "generation_max_length": 225,
-    "torch_compile": False,  # Disabled - may cause issues with label_smoothing
+    "torch_compile": False
 }
 
-# Model dropout configuration (increased to fight overfitting)
+# ANTI-OVERFITTING DROPOUT
 MODEL_DROPOUT_CONFIG = {
-    "dropout": 0.2,  
-    "attention_dropout": 0.2,  
-    "activation_dropout": 0.1,
+    "dropout": 0.3,            # High dropout
+    "attention_dropout": 0.2, 
+    "activation_dropout": 0.2, 
 }
 
-# Generation config for beam search (improves sentence structure)
+EARLY_STOPPING_CONFIG = {
+    "patience": 8,      # Stop if no improvement after ~1 epoch (8 steps)
+    "threshold": 0.001 
+}
+
 GENERATION_CONFIG = {
-    "num_beams": 5,  # Beam search for better inference
+    "num_beams": 1,
     "max_length": 225,
     "language": LANGUAGE,
     "task": TASK,
 }
 
 # =============================================================================
-# AUGMENTATION CONFIGURATION
+# AUGMENTATION (CRITICAL FOR TINY DATA)
 # =============================================================================
 AUGMENTATION_CONFIG = {
-    "speed_perturbation": [0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15],
-    "noise_snr_range": (10, 25),
-    "specaugment_time_mask": 100,
+    "speed_perturbation": [0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15], # Wide range
+    "noise_snr_range": (10, 30), # Add background noise
+    "specaugment_time_mask": 80, 
     "specaugment_freq_mask": 40,
+    "pitch_shift": 2,
 }
 
-# =============================================================================
-# CSV COLUMN NAMES (no headers in original CSV)
-# =============================================================================
 CSV_COLUMNS = ["audio_path", "language_code", "speaker_id", "transcript"]

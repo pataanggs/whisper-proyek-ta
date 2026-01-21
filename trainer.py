@@ -13,6 +13,7 @@ from transformers import (
     WhisperTokenizer,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
+    EarlyStoppingCallback,
 )
 
 from config import (
@@ -200,6 +201,10 @@ def create_trainer(
     """
     compute_metrics = create_compute_metrics(processor)
     
+    # Get early stopping patience from training args
+    early_stopping_patience = TRAINING_ARGS.get("early_stopping_patience", 5)
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)]
+    
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
@@ -208,6 +213,7 @@ def create_trainer(
         data_collator=data_collator,
         compute_metrics=compute_metrics,
         processing_class=processor,
+        callbacks=callbacks,
     )
     
     return trainer

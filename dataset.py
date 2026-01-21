@@ -121,6 +121,7 @@ def prepare_dataset_for_evaluation(
 class DataCollatorSpeechSeq2SeqWithPadding:
     """
     Data collator that dynamically pads the inputs and labels.
+    Uses manual padding for labels to avoid WhisperTokenizerFast warnings.
     """
     processor: Any
     decoder_start_token_id: int
@@ -141,24 +142,47 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         input_features = [
             {"input_features": feature["input_features"]} for feature in features
         ]
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
         
-        # Pad input features
+        # Pad input features using feature_extractor
         batch = self.processor.feature_extractor.pad(
             input_features,
             return_tensors="pt"
         )
         
-        # Pad labels
-        labels_batch = self.processor.tokenizer.pad(
-            label_features,
-            return_tensors="pt"
-        )
+        # Manual padding for labels to avoid tokenizer.pad() warning
+        # Get all label sequences
+        label_sequences = [feature["labels"] for feature in features]
+        
+        # Find max length
+        max_label_len = max(len(seq) for seq in label_sequences)
+        
+        # Pad each sequence manually with pad_token_id
+        pad_token_id = self.processor.tokenizer.pad_token_id
+        padded_labels = []
+        attention_masks = []
+        
+        for seq in label_sequences:
+            seq_len = len(seq)
+            padding_len = max_label_len - seq_len
+            
+            # Pad sequence
+            if isinstance(seq, list):
+                padded_seq = seq + [pad_token_id] * padding_len
+            else:
+                padded_seq = list(seq) + [pad_token_id] * padding_len
+            
+            # Create attention mask (1 for real tokens, 0 for padding)
+            mask = [1] * seq_len + [0] * padding_len
+            
+            padded_labels.append(padded_seq)
+            attention_masks.append(mask)
+        
+        # Convert to tensors
+        labels = torch.tensor(padded_labels, dtype=torch.long)
+        attention_mask = torch.tensor(attention_masks, dtype=torch.long)
         
         # Replace padding with -100 to ignore in loss
-        labels = labels_batch["input_ids"].masked_fill(
-            labels_batch.attention_mask.ne(1), -100
-        )
+        labels = labels.masked_fill(attention_mask.ne(1), -100)
         
         # Remove BOS token if it was added
         if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
