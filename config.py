@@ -60,7 +60,7 @@ TRAINING_ARGS = {
     "per_device_train_batch_size": 16, # Effective Batch = 32 (with grad accum)
     "per_device_eval_batch_size": 8,
     "gradient_accumulation_steps": 2,
-    "learning_rate": 1e-5*0.5,  
+    "learning_rate": 1e-5,  
     "warmup_ratio": 0.2, # CHANGED: Higher warmup (20%) to gently introduce weights
     "max_steps": 200,    # CHANGED: Reduced from 400. 50 epochs is too much for un-augmented data.
     "lr_scheduler_type": "cosine", # Cosine annealing is best for short runs
