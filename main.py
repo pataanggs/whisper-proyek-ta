@@ -1,14 +1,18 @@
 """
 Main entry point for Whisper fine-tuning on Minangkabau language.
 Implements 5-fold cross-validation with WandB integration.
+Includes comprehensive metrics logging to both local files and WandB.
 """
 
 import os
 import warnings
 import logging
+import json
 import numpy as np
 import torch
 import wandb
+from datetime import datetime
+from pathlib import Path
 from sklearn.model_selection import KFold
 
 # Suppress all warnings BEFORE importing transformers
@@ -24,6 +28,11 @@ from config import (
     NUM_FOLDS,
     RANDOM_STATE,
     CHECKPOINT_DIR,
+    OUTPUT_DIR,
+    TRAINING_ARGS,
+    MODEL_DROPOUT_CONFIG,
+    AUGMENTATION_CONFIG,
+    METRICS_LOGGING_CONFIG,
 )
 from data_loader import (
     load_and_merge_datasets,
@@ -78,6 +87,11 @@ def main():
     
     # Setup WandB
     setup_wandb()
+    
+    # Create experiment name with timestamp
+    experiment_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    print(f"\n📊 Experiment Name: {experiment_name}")
+    print(f"   Metrics will be saved locally and to WandB")
     
     # ==========================================================================
     # STEP 1: Load data (uses pre-converted WAV metadata if available)
@@ -154,6 +168,7 @@ def main():
             processor=processor,
             data_collator=data_collator,
             output_dir=str(CHECKPOINT_DIR),
+            experiment_name=experiment_name,
         )
         
         fold_results.append(fold_metrics)
@@ -188,14 +203,95 @@ def main():
     print(f"CER: {np.mean(cer_scores):.4f} ± {np.std(cer_scores):.4f}")
     print("-" * 40)
     
+    # ==========================================================================
+    # STEP 5: Save comprehensive cross-validation summary locally
+    # ==========================================================================
+    cv_summary = {
+        "experiment_name": experiment_name,
+        "timestamp": datetime.now().isoformat(),
+        "num_folds": NUM_FOLDS,
+        "training_config": {
+            "learning_rate": TRAINING_ARGS["learning_rate"],
+            "batch_size": TRAINING_ARGS["per_device_train_batch_size"],
+            "gradient_accumulation_steps": TRAINING_ARGS["gradient_accumulation_steps"],
+            "max_steps": TRAINING_ARGS["max_steps"],
+            "warmup_ratio": TRAINING_ARGS["warmup_ratio"],
+            "weight_decay": TRAINING_ARGS["weight_decay"],
+            "lr_scheduler_type": TRAINING_ARGS["lr_scheduler_type"],
+        },
+        "model_config": {
+            "dropout": MODEL_DROPOUT_CONFIG["dropout"],
+            "attention_dropout": MODEL_DROPOUT_CONFIG["attention_dropout"],
+            "activation_dropout": MODEL_DROPOUT_CONFIG["activation_dropout"],
+        },
+        "augmentation_config": AUGMENTATION_CONFIG,
+        "per_fold_results": [
+            {
+                "fold": i,
+                "wer": r["wer"],
+                "cer": r["cer"],
+                "wer_percent": r["wer"] * 100,
+                "cer_percent": r["cer"] * 100,
+                "metrics_dir": r.get("metrics_dir", ""),
+            }
+            for i, r in enumerate(fold_results)
+        ],
+        "cross_validation_summary": {
+            "mean_wer": float(np.mean(wer_scores)),
+            "std_wer": float(np.std(wer_scores)),
+            "mean_cer": float(np.mean(cer_scores)),
+            "std_cer": float(np.std(cer_scores)),
+            "min_wer": float(np.min(wer_scores)),
+            "max_wer": float(np.max(wer_scores)),
+            "min_cer": float(np.min(cer_scores)),
+            "max_cer": float(np.max(cer_scores)),
+            "mean_wer_percent": float(np.mean(wer_scores) * 100),
+            "std_wer_percent": float(np.std(wer_scores) * 100),
+            "mean_cer_percent": float(np.mean(cer_scores) * 100),
+            "std_cer_percent": float(np.std(cer_scores) * 100),
+        }
+    }
+    
+    # Save cross-validation summary locally
+    cv_summary_dir = OUTPUT_DIR / "metrics" / experiment_name
+    cv_summary_dir.mkdir(parents=True, exist_ok=True)
+    cv_summary_path = cv_summary_dir / "cross_validation_summary.json"
+    
+    with open(cv_summary_path, 'w') as f:
+        json.dump(cv_summary, f, indent=2)
+    
+    print(f"\n📊 Cross-validation summary saved to: {cv_summary_path}")
+    
     # Log summary to WandB
     wandb.init(
         project=WANDB_PROJECT,
         group=WANDB_GROUP,
-        name="summary",
+        name=f"{experiment_name}-summary",
         reinit=True,
     )
     wandb.log({
+        "cv/mean_wer": np.mean(wer_scores),
+        "cv/std_wer": np.std(wer_scores),
+        "cv/mean_cer": np.mean(cer_scores),
+        "cv/std_cer": np.std(cer_scores),
+        "cv/min_wer": np.min(wer_scores),
+        "cv/max_wer": np.max(wer_scores),
+        "cv/min_cer": np.min(cer_scores),
+        "cv/max_cer": np.max(cer_scores),
+    })
+    
+    # Log per-fold results as a table
+    fold_table = wandb.Table(
+        columns=["Fold", "WER", "CER", "WER %", "CER %"],
+        data=[
+            [i+1, r["wer"], r["cer"], r["wer"]*100, r["cer"]*100]
+            for i, r in enumerate(fold_results)
+        ]
+    )
+    wandb.log({"cv/fold_results": fold_table})
+    
+    # Update summary
+    wandb.summary.update({
         "mean_wer": np.mean(wer_scores),
         "std_wer": np.std(wer_scores),
         "mean_cer": np.mean(cer_scores),
@@ -204,7 +300,8 @@ def main():
     wandb.finish()
     
     print("\n✅ Training complete!")
-    print(f"Checkpoints saved to: {CHECKPOINT_DIR}")
+    print(f"📁 Checkpoints saved to: {CHECKPOINT_DIR}")
+    print(f"📊 All metrics saved to: {OUTPUT_DIR / 'metrics' / experiment_name}")
     
     return fold_results
 

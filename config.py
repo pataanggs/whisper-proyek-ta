@@ -98,6 +98,20 @@ EARLY_STOPPING_CONFIG = {
     "threshold": 0.001 
 }
 
+# =============================================================================
+# METRICS LOGGING CONFIGURATION
+# =============================================================================
+METRICS_DIR = OUTPUT_DIR / "metrics"
+METRICS_DIR.mkdir(exist_ok=True)
+
+METRICS_LOGGING_CONFIG = {
+    "save_locally": True,           # Save metrics to local JSON/CSV files
+    "log_to_wandb": True,           # Also log to Weights & Biases
+    "log_predictions": True,        # Log sample predictions during eval
+    "num_prediction_samples": 5,    # Number of samples to log per eval
+    "log_predictions_every_n_evals": 1,  # Log predictions every N evaluations
+}
+
 GENERATION_CONFIG = {
     "num_beams": 1,
     "max_length": 225,

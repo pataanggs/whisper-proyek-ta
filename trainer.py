@@ -2,11 +2,12 @@
 Trainer module for Whisper fine-tuning.
 Implements model initialization, freeze encoder strategy, and training loop.
 With proper language token configuration for Indonesian as proxy for Minangkabau.
+Includes comprehensive metrics logging to both local files and WandB.
 """
 
 import torch
 import evaluate
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
@@ -14,6 +15,7 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
     EarlyStoppingCallback,
+    TrainerCallback,
 )
 
 from config import (
@@ -24,7 +26,17 @@ from config import (
     TRAINING_ARGS, 
     MODEL_DROPOUT_CONFIG,
     GENERATION_CONFIG,
+    METRICS_LOGGING_CONFIG,
+    OUTPUT_DIR,
 )
+from metrics_logger import (
+    MetricsLogger,
+    create_metrics_logger,
+    create_metrics_callbacks,
+    ComprehensiveMetricsCallback,
+    PredictionLoggingCallback,
+)
+
 
 
 def load_model() -> WhisperForConditionalGeneration:
@@ -184,6 +196,7 @@ def create_trainer(
     train_dataset,
     eval_dataset,
     data_collator,
+    metrics_logger: MetricsLogger = None,
 ) -> Seq2SeqTrainer:
     """
     Create Seq2SeqTrainer for Whisper fine-tuning.
@@ -195,6 +208,7 @@ def create_trainer(
         train_dataset: Training dataset
         eval_dataset: Evaluation dataset
         data_collator: Data collator
+        metrics_logger: MetricsLogger instance for comprehensive logging
         
     Returns:
         Seq2SeqTrainer instance
@@ -204,6 +218,31 @@ def create_trainer(
     # Get early stopping patience from training args
     early_stopping_patience = TRAINING_ARGS.get("early_stopping_patience", 5)
     callbacks = [EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)]
+    
+    # Add metrics logging callbacks if logger is provided
+    if metrics_logger is not None:
+        metrics_callbacks = create_metrics_callbacks(
+            metrics_logger=metrics_logger,
+            processor=processor,
+            eval_dataset=eval_dataset,
+            log_predictions=METRICS_LOGGING_CONFIG.get("log_predictions", True),
+            num_prediction_samples=METRICS_LOGGING_CONFIG.get("num_prediction_samples", 5),
+        )
+        callbacks.extend(metrics_callbacks)
+        
+        # Log model configuration
+        model_config = {
+            "model_name": MODEL_NAME,
+            "language": LANGUAGE,
+            "language_full": LANGUAGE_FULL,
+            "task": TASK,
+            "dropout": MODEL_DROPOUT_CONFIG["dropout"],
+            "attention_dropout": MODEL_DROPOUT_CONFIG["attention_dropout"],
+            "activation_dropout": MODEL_DROPOUT_CONFIG["activation_dropout"],
+            "num_beams": GENERATION_CONFIG["num_beams"],
+            "max_length": GENERATION_CONFIG["max_length"],
+        }
+        metrics_logger.log_model_config(model_config)
     
     trainer = Seq2SeqTrainer(
         model=model,
@@ -226,9 +265,10 @@ def train_fold(
     processor: WhisperProcessor,
     data_collator,
     output_dir: str,
+    experiment_name: str = None,
 ) -> Dict[str, float]:
     """
-    Train a single fold.
+    Train a single fold with comprehensive metrics logging.
     
     Args:
         fold_idx: Fold index (0-4)
@@ -237,6 +277,7 @@ def train_fold(
         processor: WhisperProcessor
         data_collator: Data collator
         output_dir: Base output directory
+        experiment_name: Name for the experiment (for metrics logging)
         
     Returns:
         Dictionary with evaluation metrics
@@ -257,6 +298,21 @@ def train_fold(
     print(f"  Beam Search: {GENERATION_CONFIG['num_beams']} beams")
     print(f"  Dropout: {MODEL_DROPOUT_CONFIG['dropout']}")
     
+    # Create metrics logger for this fold
+    metrics_logger = create_metrics_logger(
+        output_dir=str(OUTPUT_DIR),
+        fold_idx=fold_idx,
+        experiment_name=experiment_name,
+        save_locally=METRICS_LOGGING_CONFIG.get("save_locally", True),
+        log_to_wandb=METRICS_LOGGING_CONFIG.get("log_to_wandb", True),
+    )
+    
+    # Log dataset info
+    metrics_logger.log_dataset_info(
+        train_size=len(train_dataset),
+        eval_size=len(eval_dataset),
+    )
+    
     # Create training arguments
     fold_output_dir = f"{output_dir}/fold_{fold_idx}"
     training_args = create_training_arguments(
@@ -264,7 +320,7 @@ def train_fold(
         run_name=f"fold-{fold_idx}",
     )
     
-    # Create trainer
+    # Create trainer with metrics logger
     trainer = create_trainer(
         model=model,
         processor=processor,
@@ -272,6 +328,7 @@ def train_fold(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
+        metrics_logger=metrics_logger,
     )
     
     # Train
@@ -286,9 +343,14 @@ def train_fold(
     print(f"  WER: {eval_results['eval_wer']:.4f} ({eval_results['eval_wer']*100:.2f}%)")
     print(f"  CER: {eval_results['eval_cer']:.4f} ({eval_results['eval_cer']*100:.2f}%)")
     
+    # Create and save summary report
+    summary = metrics_logger.create_summary_report()
+    print(f"\n📊 Metrics saved to: {metrics_logger.metrics_dir}")
+    
     return {
         "wer": eval_results["eval_wer"],
         "cer": eval_results["eval_cer"],
+        "metrics_dir": str(metrics_logger.metrics_dir),
     }
 
 
