@@ -127,22 +127,8 @@ class MetricsLogger:
             self._save_json(self.training_log_path, self.training_logs)
             self._save_json(self.lr_log_path, self.learning_rate_logs)
         
-        # Log to WandB (don't specify step to avoid conflicts with HF Trainer)
-        if self.log_to_wandb and wandb.run is not None:
-            wandb_log = {
-                f"train/loss": loss,
-                f"train/learning_rate": learning_rate,
-                f"train/epoch": epoch,
-                f"train/global_step": step,
-            }
-            if grad_norm:
-                wandb_log["train/grad_norm"] = grad_norm
-            if samples_per_second:
-                wandb_log["train/samples_per_second"] = samples_per_second
-            if steps_per_second:
-                wandb_log["train/steps_per_second"] = steps_per_second
-            
-            wandb.log(wandb_log)
+        # NOTE: We don't log to WandB here because HuggingFace Trainer already does it
+        # This avoids step conflicts and duplicate logging
     
     def log_evaluation(
         self,
@@ -184,23 +170,8 @@ class MetricsLogger:
             ])
             self._save_json(self.evaluation_log_path, self.evaluation_logs)
         
-        # Log to WandB (don't specify step to avoid conflicts with HF Trainer)
-        if self.log_to_wandb and wandb.run is not None:
-            wandb_log = {
-                f"eval/loss": eval_loss,
-                f"eval/wer": wer,
-                f"eval/cer": cer,
-                f"eval/wer_percent": wer * 100,
-                f"eval/cer_percent": cer * 100,
-                f"eval/epoch": epoch,
-                f"eval/global_step": step,
-            }
-            if eval_runtime:
-                wandb_log["eval/runtime"] = eval_runtime
-            if eval_samples_per_second:
-                wandb_log["eval/samples_per_second"] = eval_samples_per_second
-            
-            wandb.log(wandb_log)
+        # NOTE: We don't log to WandB here because HuggingFace Trainer already does it
+        # This avoids step conflicts and duplicate logging
     
     def log_sample_predictions(
         self,
@@ -240,22 +211,7 @@ class MetricsLogger:
         if self.save_locally:
             self._save_json(self.predictions_path, self.sample_predictions)
         
-        # Log to WandB as table
-        if self.log_to_wandb and wandb.run is not None:
-            # Create a WandB table for predictions
-            columns = ["Step", "Epoch", "Index", "Reference", "Prediction"]
-            if wer_per_sample:
-                columns.extend(["WER", "CER"])
-            
-            table_data = []
-            for i, (pred, ref) in enumerate(zip(predictions[:10], references[:10])):  # Log first 10
-                row = [step, round(epoch, 4), i, ref, pred]
-                if wer_per_sample:
-                    row.extend([wer_per_sample[i], cer_per_sample[i] if cer_per_sample else None])
-                table_data.append(row)
-            
-            table = wandb.Table(data=table_data, columns=columns)
-            wandb.log({f"predictions/samples_step_{step}": table})
+        # NOTE: Prediction tables can still be logged to WandB without step conflicts
     
     def log_epoch_summary(
         self,
@@ -295,19 +251,7 @@ class MetricsLogger:
         if self.save_locally:
             self._save_json(self.epoch_summary_path, self.epoch_summaries)
         
-        # Log to WandB
-        if self.log_to_wandb and wandb.run is not None:
-            wandb.log({
-                "epoch/train_loss_avg": train_loss_avg,
-                "epoch/eval_loss": eval_loss,
-                "epoch/wer": wer,
-                "epoch/cer": cer,
-                "epoch/learning_rate_start": learning_rate_start,
-                "epoch/learning_rate_end": learning_rate_end,
-                "epoch/best_wer_so_far": best_wer_so_far,
-                "epoch/best_cer_so_far": best_cer_so_far,
-                "epoch/number": epoch,
-            })
+        # NOTE: Epoch summary logging to WandB is handled by HF Trainer
     
     def log_model_config(self, config: Dict[str, Any]):
         """Log model configuration."""
@@ -349,8 +293,8 @@ class MetricsLogger:
         if self.save_locally:
             self._save_json(info_path, info)
         
+        # Only update config (not log) to avoid step conflicts
         if self.log_to_wandb and wandb.run is not None:
-            wandb.log({"dataset/train_size": train_size, "dataset/eval_size": eval_size})
             wandb.config.update(info, allow_val_change=True)
     
     def log_final_results(
@@ -384,14 +328,8 @@ class MetricsLogger:
         if self.save_locally:
             self._save_json(results_path, results)
         
+        # Only update summary (not log) to avoid step conflicts
         if self.log_to_wandb and wandb.run is not None:
-            wandb.log({
-                "final/wer": final_wer,
-                "final/cer": final_cer,
-                "final/best_wer": best_wer,
-                "final/best_cer": best_cer,
-                "final/training_time_minutes": total_training_time / 60,
-            })
             wandb.summary.update(results)
     
     def create_summary_report(self) -> Dict[str, Any]:
@@ -559,13 +497,11 @@ class ComprehensiveMetricsCallback(TrainerCallback):
     
     def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics: Dict[str, float] = None, **kwargs):
         """Called after evaluation."""
-        # Log to WandB with charts (don't specify step to avoid conflicts)
-        if wandb.run is not None and metrics:
-            # Create learning rate vs step chart data
-            if self.metrics_logger.learning_rate_logs:
-                lr_data = [[log["step"], log["learning_rate"]] for log in self.metrics_logger.learning_rate_logs]
-                lr_table = wandb.Table(data=lr_data, columns=["Step", "Learning Rate"])
-                wandb.log({"charts/learning_rate_curve": wandb.plot.line(lr_table, "Step", "Learning Rate", title="Learning Rate Schedule")})
+    def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics: Dict[str, float] = None, **kwargs):
+        """Called after evaluation."""
+        # NOTE: Charts logging removed to avoid step conflicts
+        # HuggingFace Trainer handles all WandB logging properly
+        pass
     
     def on_epoch_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
         """Called at the end of each epoch."""
